@@ -1025,6 +1025,7 @@ canvas.addEventListener('touchcancel', e => {
 const touchState = { left: false, right: false, jump: false, punch: false, sword: false, special: false, gun: false };
 let prevGunHeld = false; // tracks if gun button was held last frame
 let prevUKHeld = false;   // tracks if U key was held (for keyboard gun repeat prevention)
+let prevGunTouchHeld = false; // tracks if touch gun button was held last frame
 
 function handleTouches(activeTouches) {
   // Reset all touch states first
@@ -1075,15 +1076,15 @@ function handleTouches(activeTouches) {
 
 function applyTouchInput() {
   // Release gun lock when player lifts finger from gun button
-  if (prevGunHeld && !touchState.gun) p1.gunLocked = false;
-  prevGunHeld = touchState.gun;
+  if (prevGunTouchHeld && !touchState.gun) p1.gunLocked = false;
+  prevGunTouchHeld = touchState.gun;
   if (touchState.left) p1.moveLeft();
   else if (touchState.right) p1.moveRight();
   if (touchState.jump) p1.jump();
   if (touchState.punch) p1.do('punch');
   if (touchState.sword) p1.do('sword');
   if (touchState.special) p1.do('special');
-  if (touchState.gun) p1.do('gun');
+  if (touchState.gun && !prevGunTouchHeld) p1.do('gun'); // only fire on initial press
 }
 
 window.addEventListener('keydown', e => {
