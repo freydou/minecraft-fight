@@ -24,6 +24,13 @@ canvas {
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="vkeyboard" style="display:none;position:absolute;background:rgba(15,15,30,0.97);border-top:2px solid #ffd700;padding:8px 4px;z-index:100;touch-action:none;user-select:none;">
+  <div style="max-width:800px;margin:0 auto;text-align:center;">
+    <div id="vkinput" style="background:#1a1a2e;border:2px solid #ffd700;color:#fff;font:bold 18px 'Courier New';padding:6px 12px;margin-bottom:8px;border-radius:4px;min-height:32px;letter-spacing:2px;"></div>
+    <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:4px;" id="vkrows"></div>
+    <div style="margin-top:6px;display:flex;justify-content:center;gap:4px;" id="vkrows2"></div>
+  </div>
+</div>
 <script>
 // ============================================================
 //  MINECRAFT 2D FIGHT GAME
@@ -692,6 +699,7 @@ class Fighter {
     this.gunLocked = false; // true = wait for button release before firing
     this.gunCD = 0; // cooldown frames between shots
     this.speedTimer = 0; // 0 = no speed, >0 = move+attack speed boost active
+    this.specialUses = 5; // uses remaining this round
   }
 
   get hb() { return { x: this.x - 16, y: this.y - 64, w: 32, h: 64 }; }
@@ -707,6 +715,7 @@ class Fighter {
       if (this.gunShots <= 0) this.gunTimer = 0;
       return true;
     }
+    if (act === 'special' && this.specialUses <= 0) return false;
     if (this[act+'CD'] > 0) return false;
     this.atkType = act;
     this.attacking = true;
@@ -717,7 +726,7 @@ class Fighter {
     this.specialCD = act === 'special' ? 90 : 90;
     if (act === 'punch') sfx.hit();
     else if (act === 'sword') sfx.sword();
-    else { sfx.special(); screenShake = 15; }
+    else { sfx.special(); screenShake = 15; this.specialUses--; }
     return true;
   }
 
@@ -966,6 +975,7 @@ function spawnItem() {
 }
 
 function initRound() {
+  hideVK();
   p1 = new Fighter(150, 'p1');
   p2 = new Fighter(650, 'p2');
   ai = new AI(p2, currentLevel);
@@ -984,10 +994,59 @@ let roundEndTimer = 0;
 let koTimer = 0;
 let gameOverElapsed = 0;
 let winner = null;
+let totalScore = 0;        // 累计总分
+let levelScore = 0;        // 本关得分
+let playerName = 'player'; // 玩家ID
+let nameInput = '';        // 当前输入的名字
+let nameCursor = 0;        // 光标位置
+let waitingForName = true; // 游戏结束时等待输入名字
+const LEADERBOARD_KEY = 'mc_fight_leaderboard_v2';
+const MAX_LEADERBOARD = 5;
+
+// 计算本回合得分
+function calcRoundScore(winnerFighter, loserFighter) {
+  let s = 0;
+  if (winnerFighter === p1) {
+    s += 100; // 赢一回合
+    s += Math.round((winnerFighter.health / winnerFighter.maxHealth) * 50); // 残血加成
+    s += winnerFighter.specialUses * 20;    // 大招剩余次数
+    if (winnerFighter.speedTimer > 0) s += 20;
+    if (winnerFighter.shieldTimer > 0) s += 20;
+    if (winnerFighter.powerTimer > 0) s += 20;
+    if (winnerFighter.gunTimer > 0) s += 15;
+    // 通关本关加成
+    if (p1Wins >= 2) s += 200;
+  }
+  return s;
+}
+
+// 读取排行榜
+function loadLeaderboard() {
+  try {
+    return JSON.parse(localStorage.getItem(LEADERBOARD_KEY) || '[]');
+  } catch(e) { return []; }
+}
+
+// 保存排行榜
+function saveLeaderboard(arr) {
+  localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(arr));
+}
+
+// 插入新分数
+function insertScore(name, score) {
+  const lb = loadLeaderboard();
+  lb.push({ name, score });
+  lb.sort((a, b) => b.score - a.score);
+  if (lb.length > MAX_LEADERBOARD) lb.length = MAX_LEADERBOARD;
+  saveLeaderboard(lb);
+  return lb;
+}
 
 function resetAll() {
   round = 1; p1Wins = 0; p2Wins = 0;
   winner = null; gameOverElapsed = 0;
+  totalScore = 0;
+  hideVK();
   initRound();
 }
 
@@ -1033,13 +1092,22 @@ function handleTouches(activeTouches) {
   touchState.punch = false; touchState.sword = false; touchState.special = false;
 
   if (gs === 'splash') { gs = 'title'; return; }
-  if (gs === 'title') { initRound(); return; }
+  if (gs === 'title') {
+    if (cx < W * 0.35) { currentLevel = Math.max(1, currentLevel - 1); }
+    else if (cx > W * 0.65) { currentLevel = Math.min(5, currentLevel + 1); }
+    else { initRound(); }
+    return;
+  }
   if (gs === 'gameOver') {
+    if (waitingForName) {
+      // Name entry is handled by virtual keyboard — ignore canvas touch here
+      return;
+    }
     if (gameOverElapsed > 60) {
       if (winner === player1Name && currentLevel < 5) {
-        currentLevel++; round = 1; p1Wins = 0; p2Wins = 0; winner = null; initRound();
+        currentLevel++; round = 1; p1Wins = 0; p2Wins = 0; winner = null; totalScore = 0; initRound();
       } else if (winner === player1Name && currentLevel === 5) {
-        currentLevel = 1; round = 1; p1Wins = 0; p2Wins = 0; winner = null; gs = 'title';
+        currentLevel = 1; round = 1; p1Wins = 0; p2Wins = 0; winner = null; totalScore = 0; gs = 'title';
       } else {
         resetAll();
       }
@@ -1075,16 +1143,21 @@ function handleTouches(activeTouches) {
 }
 
 function applyTouchInput() {
-  // Release gun lock when player lifts finger from gun button
-  if (prevGunTouchHeld && !touchState.gun) p1.gunLocked = false;
-  prevGunTouchHeld = touchState.gun;
+  // Release gun lock and reset touch state when player lifts finger from gun button
+  if (prevGunTouchHeld && !touchState.gun) {
+    p1.gunLocked = false;
+    prevGunTouchHeld = false; // reset immediately on release so next press fires
+  }
   if (touchState.left) p1.moveLeft();
   else if (touchState.right) p1.moveRight();
   if (touchState.jump) p1.jump();
   if (touchState.punch) p1.do('punch');
   if (touchState.sword) p1.do('sword');
   if (touchState.special) p1.do('special');
-  if (touchState.gun && !prevGunTouchHeld) p1.do('gun'); // only fire on initial press
+  if (touchState.gun && !prevGunTouchHeld) {
+    prevGunTouchHeld = true; // mark as held immediately
+    p1.do('gun');
+  }
 }
 
 window.addEventListener('keydown', e => {
@@ -1098,19 +1171,34 @@ window.addEventListener('keydown', e => {
     else if (e.key === 'ArrowLeft') { currentLevel = Math.max(1, currentLevel - 1); }
     else { initRound(); }
   }
-  if (gs === 'gameOver' && gameOverElapsed > 60) {
-    if (winner === player1Name && currentLevel < 5) {
-      currentLevel++;
-      round = 1; p1Wins = 0; p2Wins = 0; winner = null;
-      initRound();
-    } else if (winner === player1Name && currentLevel === 5) {
-      // All levels cleared — back to level select
-      currentLevel = 1;
-      round = 1; p1Wins = 0; p2Wins = 0; winner = null;
-      gs = 'title';
-    } else {
-      // Player lost — retry same level
-      resetAll();
+  if (gs === 'gameOver') {
+    if (waitingForName) {
+      // Name entry mode
+      if (e.key === 'Enter') {
+        playerName = nameInput.trim() || 'player';
+        waitingForName = false;
+        hideVK();
+        insertScore(playerName, totalScore);
+      } else if (e.key === 'Backspace') {
+        nameInput = nameInput.slice(0, -1);
+      } else if (e.key.length === 1 && nameInput.length < 12) {
+        nameInput += e.key;
+      }
+      return;
+    }
+    if (gameOverElapsed > 60) {
+      if (winner === player1Name && currentLevel < 5) {
+        currentLevel++;
+        round = 1; p1Wins = 0; p2Wins = 0; winner = null; totalScore = 0;
+        initRound();
+      } else if (winner === player1Name && currentLevel === 5) {
+        // All levels cleared — back to level select
+        currentLevel = 1; round = 1; p1Wins = 0; p2Wins = 0; winner = null; totalScore = 0;
+        gs = 'title';
+      } else {
+        // Player lost — retry same level
+        resetAll();
+      }
     }
   }
 });
@@ -1336,7 +1424,12 @@ function loop(ts) {
     if (koTimer > 120) {
       gs = 'roundEnd';
       roundEndTimer = 0;
-      if (p1.dead) p2Wins++; else p1Wins++;
+      if (p1.dead) { p2Wins++; levelScore = 0; }
+      else {
+        p1Wins++;
+        levelScore = calcRoundScore(p1, p2);
+        totalScore += levelScore;
+      }
     }
   } else if (gs === 'roundEnd') {
     roundEndTimer++;
@@ -1346,6 +1439,9 @@ function loop(ts) {
         gs = 'gameOver';
         koTimer = 0;
         gameOverElapsed = 0;
+        nameInput = playerName;
+        waitingForName = true;
+        showVK();
         sfx.win();
       } else {
         round++;
@@ -1386,7 +1482,7 @@ function loop(ts) {
     ctx.fillRect(14 - bo, Math.round(H*0.5 - bs/2), bs, bs);
     ctx.fillRect(14 + bo, Math.round(H*0.5 - bs/2), bs, bs);
     // Right buttons: SPEC | SWORD | PUNCH | GUN (GUN only when gunTimer > 0)
-    ctx.fillStyle = p1.specialCD > 0 ? '#9e9e9e' : '#ff6b35';
+    ctx.fillStyle = (p1.specialCD > 0 || p1.specialUses <= 0) ? '#9e9e9e' : '#ff6b35';
     ctx.fillRect(W - 14 - bs, Math.round(H*0.11 - bs*0.4), bs, Math.round(bs*0.85));
     ctx.fillStyle = p1.swordCD > 0 ? '#9e9e9e' : '#b0bec5';
     ctx.fillRect(W - 14 - bs, Math.round(H*0.28 - bs*0.4), bs, Math.round(bs*0.85));
@@ -1396,17 +1492,17 @@ function loop(ts) {
       ctx.fillStyle = p1.gunShots <= 0 ? '#9e9e9e' : '#9c27b0';
       ctx.fillRect(W - 14 - bs, Math.round(H*0.76 - bs*0.4), bs, Math.round(bs*0.85));
       ctx.fillStyle = '#fff';
-      ctx.fillText('GUN x' + p1.gunShots, W - 14 - bs/2, H*0.76 - 2);
+      ctx.fillText('弓 x' + p1.gunShots, W - 14 - bs/2, H*0.76 - 2);
     }
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = '#fff';
     ctx.font = '7px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('SPEC', W - 14 - bs/2, H*0.11 - 2);
-    ctx.fillText('SWORD', W - 14 - bs/2, H*0.28 - 2);
-    ctx.fillText('PUNCH', W - 14 - bs/2, H*0.52 - 2);
-    ctx.fillText('WASD', 14 + bs/2, H*0.03);
-    ctx.fillText('J/K/L/U', W - 14 - bs/2, H*0.02);
+    ctx.fillText('大招 x' + p1.specialUses, W - 14 - bs/2, H*0.11 - 2);
+    ctx.fillText('剑', W - 14 - bs/2, H*0.28 - 2);
+    ctx.fillText('拳', W - 14 - bs/2, H*0.52 - 2);
+    ctx.fillText('WASD移动', 14 + bs/2, H*0.03);
+    ctx.fillText('J=大招 K=剑 L=拳 U=弓', W - 14 - bs/2, H*0.02);
   }
 
   // Splash screen
@@ -1440,7 +1536,19 @@ function loop(ts) {
     ctx.font = '12px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('← →  选择难度    任意键/点击开始', W/2, H/2 + 80);
-    ctx.fillText('P1: WASD + J/K/L', W/2, H/2 + 105);
+    ctx.fillText('操作: WASD移动 + J大招 K剑 L拳 U弓', W/2, H/2 + 105);
+  }
+
+  // Round end: show round score
+  if (gs === 'roundEnd' && roundEndTimer > 10) {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(W/2 - 120, H/2 - 50, 240, 80);
+    if (p1.dead) {
+      drawText('本回合失败', W/2, H/2 - 25, 14, '#f44336', true);
+    } else {
+      drawText('本回合 +' + levelScore + '分', W/2, H/2 - 25, 16, '#ffd700', true);
+    }
+    drawText('累计: ' + totalScore + '分', W/2, H/2 + 5, 12, '#ffffff', true);
   }
 
   if (gs === 'countdown') {
@@ -1455,7 +1563,7 @@ function loop(ts) {
     ctx.fillStyle = LEVEL_COLORS[currentLevel - 1];
     ctx.font = 'bold 12px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`第${LEVEL_NAMES[currentLevel - 1]}关 ${levelNames[currentLevel - 1]}  |  ${player1Name} ${p1Wins} - ${p2Wins} ${player2Name}`, W/2, 22);
+    ctx.fillText(`第${LEVEL_NAMES[currentLevel - 1]}关 ${levelNames[currentLevel - 1]}  |  ${player1Name} ${p1Wins} - ${p2Wins} ${player2Name}  |  总分: ${totalScore}`, W/2, 22);
   }
 
   // KO splash
@@ -1468,26 +1576,187 @@ function loop(ts) {
 
   // Game over
   if (gs === 'gameOver') {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
     ctx.fillRect(0, 0, W, H);
-    if (winner === player1Name) {
-      if (currentLevel < 5) {
-        drawText('第' + LEVEL_NAMES[currentLevel - 1] + '关  CLEARED!', W/2, H/2 - 50, 20, '#4caf50', true);
-        drawText('下一关: 第' + LEVEL_NAMES[currentLevel] + '关', W/2, H/2 - 10, 16, LEVEL_COLORS[currentLevel], true);
-        drawText('任意键/点击 继续', W/2, H/2 + 30, 12, '#ffffff', true);
+
+    if (waitingForName) {
+      // === 名字输入界面 ===
+      if (winner === player1Name) {
+        if (currentLevel === 5) {
+          drawText('恭喜通关全部关卡!', W/2, 65, 18, '#ffd700', true);
+        } else {
+          drawText('第' + LEVEL_NAMES[currentLevel - 1] + '关  CLEARED!', W/2, 65, 18, '#4caf50', true);
+        }
       } else {
-        drawText('恭喜通关全部关卡!', W/2, H/2 - 30, 22, '#ffd700', true);
-        drawText('你是地狱级王者!', W/2, H/2 + 10, 16, '#f44336', true);
-        drawText('任意键/点击 重新挑战', W/2, H/2 + 50, 12, '#ffffff', true);
+        drawText('挑战失败', W/2, 65, 22, '#f44336', true);
       }
+
+      // 总分
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 22px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('总分: ' + totalScore, W/2, 115);
+
+      // 名字输入框
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(W/2 - 150, 140, 300, 44);
+      ctx.strokeStyle = '#ffd700';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(W/2 - 150, 140, 300, 44);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      const displayName = nameInput + '_';
+      ctx.fillText(displayName, W/2, 172);
+
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = '12px "Courier New", monospace';
+      ctx.fillText('输入名字后按回车确认 | 点击跳过', W/2, 210);
+
+      ctx.fillStyle = '#888888';
+      ctx.font = '11px "Courier New", monospace';
+      ctx.fillText('(默认: player)', W/2, 228);
     } else {
-      drawText(winner + ' WINS!', W/2, H/2 - 30, 28, '#f44336', true);
-      drawText('当前第' + LEVEL_NAMES[currentLevel - 1] + '关  ' + ['简单','普通','困难','极难','地狱'][currentLevel - 1], W/2, H/2 + 10, 14, LEVEL_COLORS[currentLevel - 1], true);
-      drawText('任意键/点击 重新挑战本关', W/2, H/2 + 45, 12, '#ffffff', true);
+      // === 排行榜界面 ===
+      if (winner === player1Name) {
+        if (currentLevel === 5) {
+          drawText('恭喜通关全部关卡!', W/2, 50, 18, '#ffd700', true);
+        } else {
+          drawText('第' + LEVEL_NAMES[currentLevel - 1] + '关  CLEARED!', W/2, 50, 18, '#4caf50', true);
+        }
+      } else {
+        drawText('挑战失败', W/2, 50, 22, '#f44336', true);
+      }
+
+      // 显示总分
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 20px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('总分: ' + totalScore, W/2, 88);
+
+      // 排行榜标题
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px "Courier New", monospace';
+      ctx.fillText('—— 历史排行榜 ——', W/2, 118);
+
+      // 获取并显示排行榜
+      const lb = loadLeaderboard();
+      const levelNames = ['简单', '普通', '困难', '极难', '地狱'];
+      ctx.font = '14px "Courier New", monospace';
+      ctx.textAlign = 'left';
+
+      if (lb.length === 0) {
+        ctx.fillStyle = '#888888';
+        ctx.fillText('暂无记录', W/2 - 80, 150);
+      } else {
+        for (let i = 0; i < lb.length; i++) {
+          const rank = i + 1;
+          const entry = lb[i];
+          const ry = 145 + i * 26;
+          const isNew = entry.name === playerName && entry.score === totalScore;
+          // 排名
+          ctx.fillStyle = rank === 1 ? '#ffd700' : rank === 2 ? '#c0c0c0' : rank === 3 ? '#cd7f32' : '#888888';
+          ctx.textAlign = 'right';
+          ctx.fillText('#' + rank, W/2 - 160, ry);
+          // 名字
+          ctx.fillStyle = isNew ? '#4fc3f7' : '#ffffff';
+          ctx.textAlign = 'left';
+          ctx.fillText(entry.name, W/2 - 140, ry);
+          // 分数
+          ctx.fillStyle = isNew ? '#4fc3f7' : '#ffd700';
+          ctx.textAlign = 'right';
+          ctx.fillText(entry.score, W/2 + 160, ry);
+        }
+      }
+
+      // 底部提示
+      ctx.fillStyle = '#888888';
+      ctx.font = '11px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      const bottomMsg = winner === player1Name && currentLevel < 5
+        ? '任意键/点击 继续下一关'
+        : winner === player1Name && currentLevel === 5
+        ? '任意键/点击 重新挑战'
+        : '任意键/点击 重新挑战本关';
+      ctx.fillText(bottomMsg, W/2, H - 28);
+      ctx.fillText('当前关卡: 第' + LEVEL_NAMES[currentLevel - 1] + '关 ' + levelNames[currentLevel - 1], W/2, H - 14);
     }
   }
 
   ctx.restore();
+}
+
+// Virtual keyboard management
+const vkEl = document.getElementById('vkeyboard');
+const vkInput = document.getElementById('vkinput');
+const vkrows = document.getElementById('vkrows');
+const vkrows2 = document.getElementById('vkrows2');
+const KEYS1 = ['Q','W','E','R','T','Y','U','I','O','P'];
+const KEYS2 = ['A','S','D','F','G','H','J','K','L'];
+const KEYS3 = ['Z','X','C','V','B','N','M','_'];
+let vkBuilt = false;
+
+function buildVK() {
+  if (vkBuilt) return;
+  vkBuilt = true;
+  KEYS1.forEach(k => makeKey(k, vkrows));
+  vkrows.appendChild(makeBtn('⌫', () => { nameInput = nameInput.slice(0, -1); updateVKInput(); }));
+  vkrows2.style.marginTop = '4px';
+  KEYS2.forEach(k => makeKey(k, vkrows2));
+  const enterBtn = makeBtn('确认', () => {
+    playerName = nameInput.trim() || 'player';
+    waitingForName = false;
+    hideVK();
+    insertScore(playerName, totalScore);
+  });
+  enterBtn.style.background = '#ffd700';
+  enterBtn.style.color = '#000';
+  enterBtn.style.fontWeight = 'bold';
+  vkrows2.appendChild(enterBtn);
+  KEYS3.forEach(k => {
+    if (k === '_') { makeKey('空格', vkrows2, ' '); }
+    else makeKey(k, vkrows2);
+  });
+}
+
+function makeKey(ch, container, actualCh) {
+  const k = document.createElement('button');
+  k.textContent = ch;
+  k.style.cssText = 'min-width:28px;height:36px;background:#2a2a4a;color:#fff;border:1px solid #555;border-radius:4px;font:bold 14px Courier New;cursor:pointer;padding:0 8px;';
+  k.addEventListener('click', () => {
+    if (nameInput.length < 12) nameInput += (actualCh !== undefined ? actualCh : ch);
+    updateVKInput();
+  });
+  container.appendChild(k);
+}
+
+function makeBtn(label, handler) {
+  const k = document.createElement('button');
+  k.textContent = label;
+  k.style.cssText = 'min-width:56px;height:36px;background:#4a4a6a;color:#fff;border:1px solid #555;border-radius:4px;font:bold 13px Courier New;cursor:pointer;padding:0 8px;';
+  k.addEventListener('click', handler);
+  return k;
+}
+
+function updateVKInput() {
+  if (vkInput) vkInput.textContent = nameInput + '_';
+}
+
+function showVK() {
+  if (!vkBuilt) buildVK();
+  updateVKInput();
+  if (vkEl) {
+    const rect = canvas.getBoundingClientRect();
+    vkEl.style.left = rect.left + 'px';
+    vkEl.style.width = rect.width + 'px';
+    vkEl.style.bottom = (window.innerHeight - rect.bottom) + 'px';
+    vkEl.style.display = 'block';
+  }
+}
+
+function hideVK() {
+  if (vkEl) vkEl.style.display = 'none';
 }
 
 requestAnimationFrame(loop);
