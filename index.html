@@ -39,6 +39,21 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const W = 800, H = 500;
 canvas.width = W; canvas.height = H;
+console.log('1: canvas ready', W, 'x', H);
+
+// Virtual keyboard — declared early so hideVK() works from initRound()
+let vkEl, vkInput, vkrows, vkrows2;
+let vkBuilt = false;
+let nameInput = '';
+let waitingForName = true;
+let playerName = 'player';
+const LEADERBOARD_KEY = 'mc_fight_leaderboard_v2';
+const MAX_LEADERBOARD = 5;
+// Initialize vk elements now (after DOM is ready)
+vkEl = document.getElementById('vkeyboard');
+vkInput = document.getElementById('vkinput');
+vkrows = document.getElementById('vkrows');
+vkrows2 = document.getElementById('vkrows2');
 
 function resize() {
   const scale = Math.min(window.innerWidth / W, window.innerHeight / H, 2);
@@ -996,12 +1011,6 @@ let gameOverElapsed = 0;
 let winner = null;
 let totalScore = 0;        // 累计总分
 let levelScore = 0;        // 本关得分
-let playerName = 'player'; // 玩家ID
-let nameInput = '';        // 当前输入的名字
-let nameCursor = 0;        // 光标位置
-let waitingForName = true; // 游戏结束时等待输入名字
-const LEADERBOARD_KEY = 'mc_fight_leaderboard_v2';
-const MAX_LEADERBOARD = 5;
 
 // 计算本回合得分
 function calcRoundScore(winnerFighter, loserFighter) {
@@ -1052,6 +1061,7 @@ function resetAll() {
 
 initRound();
 gs = 'splash'; // Override: show title splash first
+console.log('3: game init done, gs=', gs);
 
 // ============================================================
 //  CONTROLS
@@ -1091,6 +1101,14 @@ function handleTouches(activeTouches) {
   touchState.left = false; touchState.right = false; touchState.jump = false;
   touchState.punch = false; touchState.sword = false; touchState.special = false;
 
+  const rect = canvas.getBoundingClientRect();
+  const sx = W / rect.width, sy = H / rect.height;
+  // Use first touch for state-level navigation
+  const t0 = activeTouches[0];
+  if (!t0) return;
+  const cx = (t0.clientX - rect.left) * sx;
+  const cy = (t0.clientY - rect.top) * sy;
+
   if (gs === 'splash') { gs = 'title'; return; }
   if (gs === 'title') {
     if (cx < W * 0.35) { currentLevel = Math.max(1, currentLevel - 1); }
@@ -1114,9 +1132,6 @@ function handleTouches(activeTouches) {
     }
     return;
   }
-
-  const rect = canvas.getBoundingClientRect();
-  const sx = W / rect.width, sy = H / rect.height;
 
   for (const t of activeTouches) {
     const cx = (t.clientX - rect.left) * sx;
@@ -1297,7 +1312,9 @@ function drawText(text, cx, cy, size, color, centered) {
 let last_ts = 0;
 
 function loop(ts) {
-  requestAnimationFrame(loop);
+  try {
+    console.log('2: loop, gs=', gs);
+    requestAnimationFrame(loop);
   const dt = Math.min((ts - last_ts) / 16.667, 2);
   last_ts = ts;
 
@@ -1546,7 +1563,7 @@ function loop(ts) {
     if (p1.dead) {
       drawText('本回合失败', W/2, H/2 - 25, 14, '#f44336', true);
     } else {
-      drawText('本回合 +' + levelScore + '分', W/2, H/2 - 25, 16, '#ffd700', true);
+      drawText('本回合得分 +' + levelScore + '分', W/2, H/2 - 25, 16, '#ffd700', true);
     }
     drawText('累计: ' + totalScore + '分', W/2, H/2 + 5, 12, '#ffffff', true);
   }
@@ -1685,17 +1702,13 @@ function loop(ts) {
   }
 
   ctx.restore();
+  } catch(e) { console.error('LOOP ERROR:', e.message); }
 }
 
 // Virtual keyboard management
-const vkEl = document.getElementById('vkeyboard');
-const vkInput = document.getElementById('vkinput');
-const vkrows = document.getElementById('vkrows');
-const vkrows2 = document.getElementById('vkrows2');
 const KEYS1 = ['Q','W','E','R','T','Y','U','I','O','P'];
 const KEYS2 = ['A','S','D','F','G','H','J','K','L'];
 const KEYS3 = ['Z','X','C','V','B','N','M','_'];
-let vkBuilt = false;
 
 function buildVK() {
   if (vkBuilt) return;
