@@ -320,6 +320,19 @@ function drawFighter(f, scale) {
     ctx.fillStyle = '#ce93d8';
     ctx.fillText('附魔弓 x' + f.gunShots, f.x, f.y - 85);
   }
+  // Speed effect - cyan glow
+  if (f.speedTimer > 0) {
+    const pulse = 0.3 + 0.2 * Math.sin(Date.now() * 0.015);
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(f.x - 22, f.y - 68, 44, 70);
+    ctx.globalAlpha = 1;
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#00e5ff';
+    ctx.fillText('加速!', f.x, f.y - 85);
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -599,6 +612,20 @@ function drawItems() {
       ctx.moveTo(ix - 8, iy);
       ctx.lineTo(ix + 8, iy);
       ctx.stroke();
+    } else if (it.type === 'speed') {
+      // Lightning bolt
+      ctx.fillStyle = it.color;
+      ctx.beginPath();
+      ctx.moveTo(ix + 2, iy - 10);
+      ctx.lineTo(ix - 4, iy + 1);
+      ctx.lineTo(ix, iy + 1);
+      ctx.lineTo(ix - 2, iy + 10);
+      ctx.lineTo(ix + 4, iy - 1);
+      ctx.lineTo(ix, iy - 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = it.glow;
+      ctx.fillRect(ix - 1, iy - 7, 3, 3);
     }
     // Label
     ctx.fillStyle = '#ffffff';
@@ -663,6 +690,8 @@ class Fighter {
     this.gunTimer = 0; // 0 = no gun, >0 = duration frames remaining
     this.gunShots = 0; // number of shots remaining
     this.gunLocked = false; // true = wait for button release before firing
+    this.gunCD = 0; // cooldown frames between shots
+    this.speedTimer = 0; // 0 = no speed, >0 = move+attack speed boost active
   }
 
   get hb() { return { x: this.x - 16, y: this.y - 64, w: 32, h: 64 }; }
@@ -670,11 +699,12 @@ class Fighter {
   do(act) {
     if (this.dead) return false;
     if (act === 'gun') {
-      if (this.gunShots <= 0 || this.gunLocked) return false;
+      if (this.gunShots <= 0 || this.gunLocked || this.gunCD > 0) return false;
       fireProjectile(this);
       this.gunShots--;
-      this.gunTimer = 300; // refresh full duration after each shot
-      if (this.gunShots <= 0) this.gunTimer = 0; // only expire when shots done
+      this.gunTimer = 300;
+      this.gunCD = 20; // 20-frame cooldown between shots (prevents key-repeat spam)
+      if (this.gunShots <= 0) this.gunTimer = 0;
       return true;
     }
     if (this[act+'CD'] > 0) return false;
@@ -752,14 +782,23 @@ class Fighter {
       this.atkFrame++;
       if (this.atkFrame >= this.atkDuration) this.attacking = false;
     }
-    // Cooldowns
+    // Cooldowns (speed boost reduces all cooldowns)
+    const speedBonus = this.speedTimer > 0 ? 1 : 0;
     if (this.punchCD > 0) this.punchCD--;
     if (this.swordCD > 0) this.swordCD--;
     if (this.specialCD > 0) this.specialCD--;
+    if (this.gunCD > 0) this.gunCD--;
+    if (speedBonus) {
+      if (this.punchCD > 0) this.punchCD--;
+      if (this.swordCD > 0) this.swordCD--;
+      if (this.specialCD > 0) this.specialCD--;
+      if (this.gunCD > 0) this.gunCD--;
+    }
     // Power timer
     if (this.powerTimer > 0) this.powerTimer--;
     if (this.shieldTimer > 0) this.shieldTimer--;
     if (this.invisibleTimer > 0) this.invisibleTimer--;
+    if (this.speedTimer > 0) this.speedTimer--;
     if (this.gunShots === 0) this.gunTimer = 0;
     // Flash
     if (this.flashTimer > 0) {
@@ -768,8 +807,8 @@ class Fighter {
     } else this.flashWhite = false;
   }
 
-  moveLeft() { if (!this.dead) { this.vx = -3.5; this.facingRight = false; } }
-  moveRight() { if (!this.dead) { this.vx = 3.5; this.facingRight = true; } }
+  moveLeft() { if (!this.dead) { this.vx = -(this.speedTimer > 0 ? 5.6 : 3.5); this.facingRight = false; } }
+  moveRight() { if (!this.dead) { this.vx = (this.speedTimer > 0 ? 5.6 : 3.5); this.facingRight = true; } }
   jump() { if (this.grounded && !this.dead) { this.vy = -12; this.grounded = false; } }
 
   drawAttackFX(scale) {
@@ -892,6 +931,7 @@ const ITEM_TYPES = [
   { type: 'shield', label: '防御强化', color: '#4fc3f7', glow: '#81d4fa', duration: 480 },
   { type: 'invisible', label: '隐身药水', color: '#9c27b0', glow: '#ce93d8', duration: 360 },
   { type: 'gun', label: '附魔弓', color: '#2e7d32', glow: '#81c784', duration: 300 },
+  { type: 'speed', label: '加速', color: '#00e5ff', glow: '#b2ebf2', duration: 480 },
 ];
 
 // Projectiles
@@ -984,6 +1024,7 @@ canvas.addEventListener('touchcancel', e => {
 // Touch state: persistent across frames
 const touchState = { left: false, right: false, jump: false, punch: false, sword: false, special: false, gun: false };
 let prevGunHeld = false; // tracks if gun button was held last frame
+let prevUKHeld = false;   // tracks if U key was held (for keyboard gun repeat prevention)
 
 function handleTouches(activeTouches) {
   // Reset all touch states first
@@ -1074,7 +1115,7 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => {
   keys[e.key.toLowerCase()] = false;
-  if (e.key.toLowerCase() === 'u') p1.gunLocked = false;
+  if (e.key.toLowerCase() === 'u') { p1.gunLocked = false; prevUKHeld = false; }
   prevGunHeld = false; // reset touch state when any key released
 });
 
@@ -1086,7 +1127,8 @@ function handleKB() {
   if (keys['j']) p1.do('punch');
   if (keys['k']) p1.do('sword');
   if (keys['l']) p1.do('special');
-  if (keys['u']) p1.do('gun');
+  if (keys['u'] && !prevUKHeld) p1.do('gun');
+  prevUKHeld = keys['u'];
 }
 
 // ============================================================
@@ -1205,7 +1247,7 @@ function loop(ts) {
         const dy = Math.abs(pr.y - (target.y - 40));
         if (dx < 20 && dy < 30) {
           // Hit!
-          const dmg = 12 * (pr.owner.powerTimer > 0 ? 1.5 : 1) * LEVEL_DIFF[currentLevel - 1];
+          const dmg = 22 * (pr.owner.powerTimer > 0 ? 1.5 : 1) * LEVEL_DIFF[currentLevel - 1];
           if (pr.owner === p2) {
             if (target.shieldTimer > 0) {
               target.hit(dmg * 0.5, pr.owner.x < target.x);
@@ -1241,20 +1283,22 @@ function loop(ts) {
         if (Math.abs(it.floatOff) > 4) it.floatDir *= -1;
         // Check pickup
         const hib = { x: it.x - 10, y: it.y - 30, w: 20, h: 30 };
-        if (overlap(hib, p1.hb) && (it.type === 'power' ? p1.powerTimer <= 0 : it.type === 'shield' ? p1.shieldTimer <= 0 : it.type === 'invisible' ? p1.invisibleTimer <= 0 : p1.gunTimer <= 0)) {
+        if (overlap(hib, p1.hb) && (it.type === 'power' ? p1.powerTimer <= 0 : it.type === 'shield' ? p1.shieldTimer <= 0 : it.type === 'invisible' ? p1.invisibleTimer <= 0 : it.type === 'gun' ? p1.gunTimer <= 0 : p1.speedTimer <= 0)) {
           if (it.type === 'power') p1.powerTimer = it.duration;
           else if (it.type === 'shield') p1.shieldTimer = it.duration;
           else if (it.type === 'invisible') p1.invisibleTimer = it.duration;
           else if (it.type === 'gun') { p1.gunTimer = it.duration; p1.gunShots = 3; p1.gunLocked = true; }
+          else if (it.type === 'speed') p1.speedTimer = it.duration;
           spawnBlockParticles(it.x, it.y - 15, p1.tint, 12, [it.color, it.glow, '#ffffff']);
           items.splice(i, 1);
           continue;
         }
-        if (overlap(hib, p2.hb) && (it.type === 'power' ? p2.powerTimer <= 0 : it.type === 'shield' ? p2.shieldTimer <= 0 : it.type === 'invisible' ? p2.invisibleTimer <= 0 : p2.gunTimer <= 0)) {
+        if (overlap(hib, p2.hb) && (it.type === 'power' ? p2.powerTimer <= 0 : it.type === 'shield' ? p2.shieldTimer <= 0 : it.type === 'invisible' ? p2.invisibleTimer <= 0 : it.type === 'gun' ? p2.gunTimer <= 0 : p2.speedTimer <= 0)) {
           if (it.type === 'power') p2.powerTimer = it.duration;
           else if (it.type === 'shield') p2.shieldTimer = it.duration;
           else if (it.type === 'invisible') p2.invisibleTimer = it.duration;
           else if (it.type === 'gun') p2.gunTimer = it.duration;
+          else if (it.type === 'speed') p2.speedTimer = it.duration;
           spawnBlockParticles(it.x, it.y - 15, p2.tint, 12, [it.color, it.glow, '#ffffff']);
           items.splice(i, 1);
           continue;
