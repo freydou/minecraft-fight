@@ -1014,17 +1014,19 @@ let levelScore = 0;        // 本关得分
 
 // 计算本回合得分
 function calcRoundScore(winnerFighter, loserFighter) {
+  const SCORE_MULT = [1.0, 1.2, 1.5, 1.8, 2.2]; // 难度倍率
+  const mult = SCORE_MULT[currentLevel - 1] || 1;
   let s = 0;
   if (winnerFighter === p1) {
-    s += 100; // 赢一回合
-    s += Math.round((winnerFighter.health / winnerFighter.maxHealth) * 50); // 残血加成
-    s += winnerFighter.specialUses * 20;    // 大招剩余次数
-    if (winnerFighter.speedTimer > 0) s += 20;
-    if (winnerFighter.shieldTimer > 0) s += 20;
-    if (winnerFighter.powerTimer > 0) s += 20;
-    if (winnerFighter.gunTimer > 0) s += 15;
+    s += Math.round(100 * mult);   // 基础赢分
+    s += Math.round((winnerFighter.health / winnerFighter.maxHealth) * 50 * mult); // 残血加成
+    s += Math.round(winnerFighter.specialUses * 20 * mult);    // 大招剩余次数
+    if (winnerFighter.speedTimer > 0) s += Math.round(20 * mult);
+    if (winnerFighter.shieldTimer > 0) s += Math.round(20 * mult);
+    if (winnerFighter.powerTimer > 0) s += Math.round(20 * mult);
+    if (winnerFighter.gunTimer > 0) s += Math.round(15 * mult);
     // 通关本关加成
-    if (p1Wins >= 2) s += 200;
+    if (p1Wins >= 2) s += Math.round(200 * mult);
   }
   return s;
 }
@@ -1082,11 +1084,13 @@ canvas.addEventListener('touchmove', e => {
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
   for (const t of e.changedTouches) delete touchMap[t.identifier];
+  prevGunTouchHeld = false; // reset immediately on touch end
   handleTouches(e.touches);
 }, { passive: false });
 canvas.addEventListener('touchcancel', e => {
   e.preventDefault();
   for (const t of e.changedTouches) delete touchMap[t.identifier];
+  prevGunTouchHeld = false; // reset on touch cancel too
   handleTouches(e.touches);
 }, { passive: false });
 
@@ -1158,10 +1162,10 @@ function handleTouches(activeTouches) {
 }
 
 function applyTouchInput() {
-  // Release gun lock and reset touch state when player lifts finger from gun button
+  // Release gun lock when player lifts finger
   if (prevGunTouchHeld && !touchState.gun) {
     p1.gunLocked = false;
-    prevGunTouchHeld = false; // reset immediately on release so next press fires
+    prevGunTouchHeld = false;
   }
   if (touchState.left) p1.moveLeft();
   else if (touchState.right) p1.moveRight();
@@ -1169,9 +1173,10 @@ function applyTouchInput() {
   if (touchState.punch) p1.do('punch');
   if (touchState.sword) p1.do('sword');
   if (touchState.special) p1.do('special');
+  // Gun: fire on initial press of each tap, gunCD handles rate limit
   if (touchState.gun && !prevGunTouchHeld) {
-    prevGunTouchHeld = true; // mark as held immediately
     p1.do('gun');
+    prevGunTouchHeld = true;
   }
 }
 
@@ -1554,6 +1559,21 @@ function loop(ts) {
     ctx.textAlign = 'center';
     ctx.fillText('← →  选择难度    任意键/点击开始', W/2, H/2 + 80);
     ctx.fillText('操作: WASD移动 + J大招 K剑 L拳 U弓', W/2, H/2 + 105);
+
+    // Show top 3 from leaderboard
+    const lb = loadLeaderboard();
+    if (lb.length > 0) {
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('历史最高分', W/2, H - 78);
+      ctx.fillStyle = '#aaa';
+      ctx.font = '10px monospace';
+      for (let i = 0; i < Math.min(3, lb.length); i++) {
+        const rank = ['①', '②', '③'][i];
+        ctx.fillStyle = i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : '#cd7f32';
+        ctx.fillText(rank + ' ' + lb[i].name + '  ' + lb[i].score + '分', W/2, H - 62 + i * 16);
+      }
+    }
   }
 
   // Round end: show round score
