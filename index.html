@@ -1065,11 +1065,11 @@ function handleTouches(activeTouches) {
     }
     // Right 45%: attack buttons
     else if (cx > W * 0.55) {
-      // Top: Special | Middle: Sword | Above bottom: Punch | Bottom: Gun
-      if (cy < H * 0.25) touchState.special = true;
-      else if (cy < H * 0.50) touchState.sword = true;
-      else if (cy < H * 0.78) touchState.punch = true;
-      else touchState.gun = true;
+      // Top: Special | Middle: Sword | Above bottom: Punch | Bottom: Gun (only when gunTimer > 0)
+      if (cy < H * 0.28) touchState.special = true;
+      else if (cy < H * 0.42) touchState.sword = true;
+      else if (cy < H * 0.66) touchState.punch = true;
+      else if (p1.gunTimer > 0) touchState.gun = true;
     }
   }
 }
@@ -1385,23 +1385,26 @@ function loop(ts) {
     ctx.fillRect(14, Math.round(H*0.67 - bs/2), bs, bs);
     ctx.fillRect(14 - bo, Math.round(H*0.5 - bs/2), bs, bs);
     ctx.fillRect(14 + bo, Math.round(H*0.5 - bs/2), bs, bs);
-    // Right buttons: SPEC | SWORD | PUNCH | GUN (top to bottom)
+    // Right buttons: SPEC | SWORD | PUNCH | GUN (GUN only when gunTimer > 0)
     ctx.fillStyle = p1.specialCD > 0 ? '#9e9e9e' : '#ff6b35';
-    ctx.fillRect(W - 14 - bs, Math.round(H*0.08 - bs*0.4), bs, Math.round(bs*0.85));
+    ctx.fillRect(W - 14 - bs, Math.round(H*0.11 - bs*0.4), bs, Math.round(bs*0.85));
     ctx.fillStyle = p1.swordCD > 0 ? '#9e9e9e' : '#b0bec5';
-    ctx.fillRect(W - 14 - bs, Math.round(H*0.33 - bs*0.4), bs, Math.round(bs*0.85));
+    ctx.fillRect(W - 14 - bs, Math.round(H*0.28 - bs*0.4), bs, Math.round(bs*0.85));
     ctx.fillStyle = p1.punchCD > 0 ? '#9e9e9e' : '#ffd700';
-    ctx.fillRect(W - 14 - bs, Math.round(H*0.58 - bs*0.4), bs, Math.round(bs*0.85));
-    ctx.fillStyle = p1.gunTimer > 0 ? '#9c27b0' : '#9e9e9e';
-    ctx.fillRect(W - 14 - bs, Math.round(H*0.83 - bs*0.4), bs, Math.round(bs*0.85));
+    ctx.fillRect(W - 14 - bs, Math.round(H*0.52 - bs*0.4), bs, Math.round(bs*0.85));
+    if (p1.gunTimer > 0) {
+      ctx.fillStyle = p1.gunShots <= 0 ? '#9e9e9e' : '#9c27b0';
+      ctx.fillRect(W - 14 - bs, Math.round(H*0.76 - bs*0.4), bs, Math.round(bs*0.85));
+      ctx.fillStyle = '#fff';
+      ctx.fillText('GUN x' + p1.gunShots, W - 14 - bs/2, H*0.76 - 2);
+    }
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = '#fff';
     ctx.font = '7px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('SPEC', W - 14 - bs/2, H*0.08 - 2);
-    ctx.fillText('SWORD', W - 14 - bs/2, H*0.33 - 2);
-    ctx.fillText('PUNCH', W - 14 - bs/2, H*0.58 - 2);
-    ctx.fillText('GUN', W - 14 - bs/2, H*0.83 - 2);
+    ctx.fillText('SPEC', W - 14 - bs/2, H*0.11 - 2);
+    ctx.fillText('SWORD', W - 14 - bs/2, H*0.28 - 2);
+    ctx.fillText('PUNCH', W - 14 - bs/2, H*0.52 - 2);
     ctx.fillText('WASD', 14 + bs/2, H*0.03);
     ctx.fillText('J/K/L/U', W - 14 - bs/2, H*0.02);
   }
