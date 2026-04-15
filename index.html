@@ -1413,7 +1413,7 @@ function loop(ts) {
           if (it.type === 'power') p2.powerTimer = it.duration;
           else if (it.type === 'shield') p2.shieldTimer = it.duration;
           else if (it.type === 'invisible') p2.invisibleTimer = it.duration;
-          else if (it.type === 'gun') p2.gunTimer = it.duration;
+          else if (it.type === 'gun') { p2.gunTimer = it.duration; p2.gunShots = 3; p2.gunLocked = true; }
           else if (it.type === 'speed') p2.speedTimer = it.duration;
           spawnBlockParticles(it.x, it.y - 15, p2.tint, 12, [it.color, it.glow, '#ffffff']);
           items.splice(i, 1);
