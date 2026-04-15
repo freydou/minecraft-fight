@@ -1162,7 +1162,7 @@ function handleTouches(activeTouches) {
 }
 
 function applyTouchInput() {
-  // Release gun lock when player lifts finger
+  // Release gun lock when player lifts finger from gun button
   if (prevGunTouchHeld && !touchState.gun) {
     p1.gunLocked = false;
     prevGunTouchHeld = false;
@@ -1173,13 +1173,18 @@ function applyTouchInput() {
   if (touchState.punch) p1.do('punch');
   if (touchState.sword) p1.do('sword');
   if (touchState.special) p1.do('special');
-  // Gun: fire on initial press of each tap, gunCD handles rate limit
+  // Gun: fire on tap (not hold). gunCD prevents spam, gunLocked only blocks on first tap after pickup.
   if (touchState.gun && !prevGunTouchHeld) {
-    p1.do('gun');
+    const fired = p1.do('gun');
     prevGunTouchHeld = true;
+    // If gunLocked was blocking the shot, clear it so next tap fires immediately
+    if (!fired && p1.gunLocked) {
+      p1.gunLocked = false;
+    }
   }
 }
 
+// Keyboard controls
 window.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (gs === 'splash') {
